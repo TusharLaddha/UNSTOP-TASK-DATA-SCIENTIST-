@@ -1,0 +1,124 @@
+import requests
+import json
+import numpy as np
+import pandas as pd
+import nltk 
+from nltk.tokenize import sent_tokenize, word_tokenize
+from nltk.corpus import stopwords
+from string import punctuation
+import numpy as np
+from nltk.tokenize import RegexpTokenizer
+from nltk.stem import WordNetLemmatizer
+url = 'https://newsapi.org/v2/everything?'
+
+api_key = '1178ada535fc425a9404e4833f240db2' 
+
+# function to take raw data from the API and process it into a list inorder to trnasform it into a pandas dataframe
+def get_articles(file): 
+    article_results = [] 
+    for i in range(len(file)):
+        article_dict = {}
+        article_dict['title'] = file[i]['title']
+        article_dict['author'] = file[i]['author']
+        article_dict['source'] = file[i]['source']
+        article_dict['description'] = file[i]['description']
+        article_dict['content'] = file[i]['content']
+        article_dict['pub_date'] = file[i]['publishedAt']
+        article_dict['url'] = file[i]["url"]
+        article_dict['photo_url'] = file[i]['urlToImage']
+        article_results.append(article_dict)
+    return article_results
+#topic of the article
+print(article_results['title'])
+# Collecting the first 100 articles about ireland to check the API and the working of the function 
+parameters_headlines = {
+    'q': 'India',
+    'sortBy':'popularity',
+    'pageSize': 100,
+    'apiKey': api_key,
+    'language': 'en',
+    'from' : '2022-11-25'    
+}
+# making the API call 
+response_headline = requests.get(url, params = parameters_headlines)
+response_json_headline = response_headline.json()
+responses = response_json_headline["articles"]
+# transforminf the data from JSON dictionary to a pandas data frame
+news_articles_df = pd.DataFrame(get_articles(responses))
+# printing the head to check the format and the working of the get_articles function
+news_articles_df.head()
+responses = list() # stores responses for various news sources
+domains = ['wsj.com','aljazeera.com','bbc.co.uk','techcrunch.com', 'nytimes.com','bloomberg.com','businessinsider.com',
+             'cbc.ca','cnbc.com','cnn.com','ew.com','espn.go.com','espncricinfo.com','foxnews.com', 'apnews.com',
+             'news.nationalgeographic.com','nymag.com','reuters.com','rte.ie','thehindu.com','huffingtonpost.com',
+             'irishtimes.com','timesofindia.indiatimes.com','washingtonpost.com','time.com','medicalnewstoday.com',
+             'ndtv.com','theguardian.com','dailymail.co.uk','firstpost.com','thejournal.ie', 'hindustantimes.com',
+             'economist.com','news.vice.com','usatoday.com','telegraph.co.uk','metro.co.uk','mirror.co.uk','news.google.com']
+for domain in domains:
+    parameters_headlines = {
+    'domains':format(domain),
+    'sortBy':'popularity',
+    'pageSize': 100,
+    'apiKey': api_key,
+    'language': 'en',
+    'from' : '2022-11-25'    
+    }
+    rr = requests.get(url, params = parameters_headlines)
+    data = rr.json()
+    responses = data["articles"]
+    news_articles_df=news_articles_df.append(pd.DataFrame(get_articles(responses)))
+# function to exatract just the name of the source of the news article and exclude other details
+def source_getter(df):
+    source = []
+    for source_dict in df['source']:
+        source.append(source_dict['name'])
+    df['source'] = source #append the source to the df
+# this fuincton extracts the source name from the source dictionary as seen above
+source_getter(news_articles_df)
+# converted the publication date to date time format for future analysis
+news_articles_df['pub_date'] = pd.to_datetime(news_articles_df['pub_date']).apply(lambda x: x.date())
+#look for missing data
+news_articles_df.isnull().sum() 
+# droping the rows with missing data 
+news_articles_df.dropna(inplace=True)
+news_articles_df = news_articles_df[~news_articles_df['description'].isnull()]
+# summarize the number of rows and columns in the dataset
+print(news_articles_df.isnull().sum())
+print(news_articles_df.shape)
+# combine the title and the content to get one dataframe column
+news_articles_df['combined_text'] = news_articles_df['title'].map(str) +" "+ news_articles_df['content'].map(str) 
+news_articles_df.head()
+print(news_articles_df.isnull().sum())
+news_articles_df.dropna(inplace=True)
+print(news_articles_df.shape)
+print(news_articles_df.isnull().sum())
+# calculating the polarity of the news articles 
+from nltk.sentiment.vader import SentimentIntensityAnalyzer as SIA
+sia = SIA()
+results = []
+for line in news_articles_df['lems'] :
+    pol_score = sia.polarity_scores(line)
+    pol_score['headline'] = line
+    results.append(pol_score)
+# Creating a new dataframe of only the polarity score, the headline and the source of the news 
+headlines_polarity = pd.DataFrame.from_records(results)
+temp = []
+for line in news_articles_df['source'] :
+    temp.append(line)
+headlines_polarity['source'] =temp
+# categorize news as positive or negative based on the compound score obtained
+headlines_polarity['label'] = 0
+# I have considered the news as positive if the compound score is greater than 0.2 hence the label 1
+headlines_polarity.loc[headlines_polarity['compound'] > 0.2, 'label'] = 1
+# if the compound score is below 0.2 then it is considered negative 
+headlines_polarity.loc[headlines_polarity['compound'] < -0.2, 'label'] = -1
+# word count of news headlines is calculated
+headlines_polarity['word_count'] = headlines_polarity['headline'].apply(lambda x: len(str(x).split()))
+headlines_polarity.head()
+#headlines_polarity.label.value_counts()
+#headlines_polarity.groupby('source').label.value_counts()
+# Grouping the news articles by their source and calculating their mean polarity  
+gk = headlines_polarity.groupby(['source', 'label']) 
+fk= headlines_polarity.groupby('source')['compound'].mean()
+fk = fk.to_frame()
+fk.to_csv('data/mean_polarity.csv', index = 'source')
